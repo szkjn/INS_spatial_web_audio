@@ -4,13 +4,67 @@
 <head>
   <meta charset="UTF-8">
   <title>SRC Client</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- For better mobile scaling -->
+  <style>
+    body {
+      background-color: #121212;
+      color: #e0e0e0;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 1.2em; /* Larger base font size */
+      margin: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center; /* Center content */
+      text-align: center;
+    }
+    h1 {
+      color: #ffffff;
+      border-bottom: 1px solid #444;
+      padding-bottom: 5px;
+      margin-bottom: 20px;
+    }
+    button {
+      background-color: #333;
+      color: #e0e0e0;
+      border: 1px solid #555;
+      padding: 12px 18px; /* Larger padding for buttons */
+      margin: 10px 5px; /* More margin for buttons */
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 1em; /* Relative to body font size */
+    }
+    button:hover {
+      background-color: #444;
+    }
+    #status {
+      font-weight: bold;
+      margin-bottom: 15px;
+    }
+    #noteIndicator {
+      background-color: #1f1f1f;
+      border: 1px solid #333;
+      border-radius: 5px;
+      padding: 15px;
+      margin-top: 20px;
+      width: 80%; /* Adjust width as needed */
+      max-width: 400px; /* Max width for larger screens */
+    }
+    #noteIndicator h3 {
+        margin-top: 0;
+        color: #ffffff;
+    }
+    #noteIndicator p {
+        margin: 8px 0;
+        font-size: 0.9em; /* Slightly smaller than body, but still larger overall */
+    }
+  </style>
 </head>
 <body>
   <h1>SRC Client</h1>
   <p id="status">Connecting...</p>
-  <button id="startSessionButton" style="display: block;">Start Session & Keep Screen On</button>
+  <button id="startSessionButton" style="display: block;">Start Session</button>
   <button id="testTone" style="display: none;">Test Tone</button>
-  <div id="noteIndicator" style="margin-top: 20px; padding: 10px; border: 2px solid #ccc; border-radius: 5px;">
+  <div id="noteIndicator">
     <h3>Last Note Received:</h3>
     <p id="lastNote">None</p>
     <p id="noteCount">Notes received: 0</p>
