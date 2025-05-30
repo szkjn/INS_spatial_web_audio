@@ -1,0 +1,32 @@
+<!-- public/src.html -->
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>SRC Client</title>
+</head>
+<body>
+  <h1>SRC Client</h1>
+  <p id="status">Connecting...</p>
+
+  <script>
+    const id = 'src-' + Math.random().toString(36).substr(2, 5);
+    const ws = new WebSocket(`ws://${location.host}`);
+
+    ws.onopen = () => {
+      document.getElementById('status').textContent = 'Connected';
+      ws.send(JSON.stringify({ type: 'register', id }));
+    };
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      console.log('Received:', data);
+      // Future: handle MIDI/audio commands here
+    };
+
+    ws.onclose = () => {
+      document.getElementById('status').textContent = 'Disconnected';
+    };
+  </script>
+</body>
+</html>

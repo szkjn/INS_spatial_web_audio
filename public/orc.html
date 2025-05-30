@@ -1,0 +1,43 @@
+<!-- public/orc.html -->
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>spatial orc controller</title>
+</head>
+<body>
+  <h1>spatial orc controller</h1>
+  <ul id="clients"></ul>
+
+  <script>
+    const ws = new WebSocket(`ws://${location.host}`);
+    const clientsList = document.getElementById('clients');
+    const clients = new Set();
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: 'register', id: 'orc' }));
+    };
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'clients') {
+        clientsList.innerHTML = '';
+        data.clients.forEach(clientId => {
+          if (clientId !== 'orc') {
+            const li = document.createElement('li');
+            li.textContent = clientId;
+            li.onclick = () => {
+              ws.send(JSON.stringify({
+                type: 'message',
+                to: clientId,
+                payload: { type: 'note', note: 'C4' }
+              }));
+            };
+            clientsList.appendChild(li);
+          }
+        });
+      }
+    };
+  </script>
+</body>
+</html>
