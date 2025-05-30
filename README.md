@@ -9,6 +9,8 @@ A simple web application demonstrating real-time audio broadcasting from an orch
 *   **Audio Broadcasting**: The ORC client can trigger audio playback (a C4 note) on selected SRC clients.
 *   **Web Audio API**: SRC clients use the Web Audio API to generate and play tones.
 *   **Mobile Friendly**: Includes considerations for Web Audio API on mobile devices (user gesture for audio initialization).
+*   **Effects**: 
+    *   **Global Delay**: The ORC client can configure global delay parameters (time and feedback) that are applied to all SRC clients. Each SRC client processes its own audio with these delay settings.
 
 ## Technologies Used
 
@@ -61,11 +63,13 @@ You should see a confirmation message: `Server running on http://0.0.0.0:3000`
 
 2.  **ORC Client**:
     *   The `orc.html` page will display a list of connected SRC clients (e.g., "src-xxxxx").
-    *   Clicking on an SRC client ID in the list will send a signal to that specific SRC client to play a C4 note.
+    *   It also features controls to set global delay time and feedback.
+    *   Clicking "Apply Global Delay" sends these settings to all SRCs.
+    *   For each SRC client, there are buttons to send different notes (A3, C4, E4, G4).
 
 3.  **SRC Client(s) (Playback)**:
-    *   When the ORC client triggers a note for a specific SRC, that SRC client should play a C4 sound.
-    *   The on-screen debug information on the SRC client will show the last note received, the count of notes, and audio status.
+    *   When the ORC client triggers a note for a specific SRC, that SRC client should play the specified sound, processed through the currently active global delay effect.
+    *   The on-screen debug information on the SRC client will show the last note received, the count of notes, and audio status (which may include current delay parameters).
 
 ## Notes for Mobile Devices
 

@@ -6,12 +6,49 @@
 </head>
 <body>
   <h1>spatial orc controller</h1>
+  
+  <div id="globalEffectsControls">
+    <h2>Global Delay Settings</h2>
+    <div>
+      <label for="delayTime">Delay Time (0-2s):</label>
+      <input type="number" id="delayTime" name="delayTime" min="0" max="2" step="0.05" value="0.4">
+    </div>
+    <div>
+      <label for="delayFeedback">Feedback (0-0.9):</label>
+      <input type="number" id="delayFeedback" name="delayFeedback" min="0" max="0.9" step="0.05" value="0.3">
+    </div>
+    <button id="applyGlobalDelay">Apply Global Delay</button>
+  </div>
+  
+  <hr>
+  <h2>Connected SRC Clients</h2>
   <ul id="clients"></ul>
 
   <script>
     const ws = new WebSocket(`ws://${location.host}`);
     const clientsList = document.getElementById('clients');
-    const clients = new Set();
+    // const clients = new Set(); // No longer strictly needed with current broadcast logic
+
+    const notesToSend = ['A3', 'C4', 'E4', 'G4']; // Example notes (Cmin arpeggio)
+
+    // Global Effects Controls
+    const delayTimeInput = document.getElementById('delayTime');
+    const delayFeedbackInput = document.getElementById('delayFeedback');
+    const applyGlobalDelayButton = document.getElementById('applyGlobalDelay');
+
+    applyGlobalDelayButton.onclick = () => {
+      const delayTime = parseFloat(delayTimeInput.value);
+      const feedback = parseFloat(delayFeedbackInput.value);
+      console.log(`ORC: Applying global delay - Time: ${delayTime}, Feedback: ${feedback}`);
+      ws.send(JSON.stringify({
+        type: 'set_global_effect',
+        effect: {
+          type: 'delay',
+          delayTime: delayTime,
+          feedback: feedback
+        }
+      }));
+    };
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ type: 'register', id: 'orc' }));
@@ -20,22 +57,28 @@
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.type === 'clients') {
-        clientsList.innerHTML = '';
+        clientsList.innerHTML = ''; // Clear the list
         data.clients.forEach(clientId => {
           if (clientId !== 'orc') {
-            const li = document.createElement('li');
-            li.textContent = clientId;
-            li.style.cursor = 'pointer';
-            li.onclick = () => {
-              console.log(`Sending note to ${clientId}`);
-              ws.send(JSON.stringify({
-                type: 'message',
-                to: clientId,
-                payload: { type: 'note', note: 'C4' }
-              }));
-              console.log(`Message sent to ${clientId}`);
-            };
-            clientsList.appendChild(li);
+            const listItem = document.createElement('li');
+            listItem.textContent = `${clientId}: `;
+
+            notesToSend.forEach(note => {
+              const noteButton = document.createElement('button');
+              noteButton.textContent = note;
+              noteButton.style.marginLeft = '5px';
+              noteButton.onclick = () => {
+                console.log(`ORC: Sending note '${note}' to ${clientId}`);
+                ws.send(JSON.stringify({
+                  type: 'message',
+                  to: clientId,
+                  payload: { type: 'note', note: note }
+                }));
+                console.log(`ORC: Message for '${note}' sent to ${clientId}`);
+              };
+              listItem.appendChild(noteButton);
+            });
+            clientsList.appendChild(listItem);
           }
         });
       }

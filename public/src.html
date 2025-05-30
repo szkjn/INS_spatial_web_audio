@@ -8,7 +8,7 @@
 <body>
   <h1>SRC Client</h1>
   <p id="status">Connecting...</p>
-  <button id="initAudio" style="display: none;">Enable Audio</button>
+  <button id="startSessionButton" style="display: block;">Start Session & Keep Screen On</button>
   <button id="testTone" style="display: none;">Test Tone</button>
   <div id="noteIndicator" style="margin-top: 20px; padding: 10px; border: 2px solid #ccc; border-radius: 5px;">
     <h3>Last Note Received:</h3>
@@ -26,6 +26,14 @@
     let audioContext;
     let audioInitialized = false;
     let noteCount = 0;
+
+    // Delay effect nodes and parameters
+    let delayNode = null;
+    let feedbackNode = null;
+    let wetGainNode = null; // To control overall level of delayed sound
+    let currentDelayTime = 0;
+    let currentFeedbackAmount = 0;
+    const MAX_DELAY = 2.0; // Maximum delay time in seconds
 
     // Check browser support and capabilities
     function checkBrowserSupport() {
@@ -49,11 +57,10 @@
     }
 
     // Show init audio button initially
-    document.getElementById('initAudio').style.display = 'block';
-    document.getElementById('initAudio').onclick = initAudio;
+    document.getElementById('startSessionButton').style.display = 'block';
+    document.getElementById('startSessionButton').onclick = startSession; 
     document.getElementById('testTone').onclick = () => playNote('A4');
     
-    // Check browser support on load
     checkBrowserSupport();
 
     function updateAudioStatus(status) {
@@ -79,6 +86,19 @@
       }, 500);
     }
 
+    async function startSession() {
+        console.log('startSession: Initiating session...');
+        await initAudio();
+
+        if (audioInitialized) {
+            console.log('startSession: Audio initialized.');
+            document.getElementById('startSessionButton').style.display = 'none';
+            document.getElementById('testTone').style.display = 'block';
+        } else {
+            console.error('startSession: Audio initialization failed.');
+        }
+    }
+
     async function initAudio() {
       console.log('initAudio: Attempting to initialize AudioContext...');
       try {
@@ -89,15 +109,28 @@
           await audioContext.resume();
         }
         
+        // Initialize Delay Nodes
+        delayNode = audioContext.createDelay(MAX_DELAY);
+        feedbackNode = audioContext.createGain();
+        wetGainNode = audioContext.createGain();
+
+        // Set initial delay parameters (can be overridden by server)
+        // These should be the global currentDelayTime and currentFeedbackAmount
+        // which might have been set by a message before initAudio if ORC sends effect early.
+        delayNode.delayTime.setValueAtTime(currentDelayTime, audioContext.currentTime);
+        feedbackNode.gain.setValueAtTime(currentFeedbackAmount, audioContext.currentTime);
+        wetGainNode.gain.setValueAtTime(1.0, audioContext.currentTime); // Start with wet signal at full volume
+
+        console.log('initAudio: Delay nodes initialized.');
+
         audioInitialized = true;
-        document.getElementById('initAudio').style.display = 'none';
-        document.getElementById('testTone').style.display = 'block';
         updateAudioStatus('Initialized');
         updateAudioState();
         console.log(`initAudio: AudioContext initialized successfully. State: ${audioContext.state}`);
       } catch (error) {
+        audioInitialized = false;
         updateAudioStatus('Failed to initialize');
-        console.error('initAudio: Failed to initialize AudioContext:', error);
+        console.error('initAudio: Failed to initialize AudioContext or effect nodes:', error);
       }
     }
 
@@ -107,17 +140,31 @@
     };
 
     ws.onmessage = (event) => {
-      // console.log('SRC received message:', event.data); // Can be noisy
       try {
         const data = JSON.parse(event.data);
-        // console.log('SRC parsed data:', data); // Can be noisy
         if (data.type === 'note') {
           console.log(`SRC: Received note '${data.note}'`);
           updateNoteReceived(data.note);
           playNote(data.note);
         } else if (data.type === 'clients') {
           console.log('SRC: Received client list update.');
-          // Potentially update UI if needed, but not logging every client ID here
+        } else if (data.type === 'apply_effect' && data.effect && data.effect.type === 'delay') {
+          console.log('SRC: Received delay effect settings:', data.effect);
+          const newDelayTime = Math.max(0, Math.min(MAX_DELAY, data.effect.delayTime || 0));
+          const newFeedbackAmount = Math.max(0, Math.min(0.95, data.effect.feedback || 0)); // Cap feedback
+
+          currentDelayTime = newDelayTime;
+          currentFeedbackAmount = newFeedbackAmount;
+
+          if (audioContext && delayNode && feedbackNode) {
+            const applyTime = audioContext.currentTime;
+            delayNode.delayTime.setValueAtTime(currentDelayTime, applyTime);
+            feedbackNode.gain.setValueAtTime(currentFeedbackAmount, applyTime);
+            console.log(`SRC: Applied delay - Time: ${currentDelayTime}, Feedback: ${currentFeedbackAmount}`);
+            document.getElementById('audioStatus').textContent = `Delay: T=${currentDelayTime.toFixed(2)}s F=${currentFeedbackAmount.toFixed(2)}`;
+          } else {
+            console.warn('SRC: AudioContext or delay nodes not ready for effect update. Parameters stored.');
+          }
         } else {
           console.warn('SRC: Received unknown message type:', data);
         }
@@ -131,33 +178,33 @@
     };
 
     async function playNote(note) {
-      if (!audioInitialized) {
-        console.log('playNote: Audio not initialized, attempting to initialize...');
-        updateAudioStatus('Auto-initializing...');
-        await initAudio();
+      if (!audioInitialized || !audioContext || !delayNode || !feedbackNode || !wetGainNode) {
+        console.error('playNote: Audio system or delay nodes not initialized properly.');
+        // Attempt to initialize if not already, but this might be too late if called rapidly
         if (!audioInitialized) {
-            console.error('playNote: Audio initialization failed.');
-            updateAudioStatus('Initialization failed');
-            return;
+            console.log('playNote: Audio not initialized, attempting to initialize...');
+            updateAudioStatus('Auto-initializing...');
+            await initAudio();
+            if (!audioInitialized || !audioContext || !delayNode || !feedbackNode || !wetGainNode) {
+                console.error('playNote: Post-initialization check failed. Aborting playback.');
+                updateAudioStatus('Initialization / Effect Setup failed');
+                return;
+            }
         }
-      }
-
-      if (!audioContext) {
-        console.error('playNote: AudioContext is not available.');
-        updateAudioStatus('Not available');
+        updateAudioStatus('Error: Audio/Effects not ready');
         return;
       }
 
-      console.log(`playNote: Attempting note '${note}'. Context state: ${audioContext.state}`);
-      updateAudioState();
+      // console.log(`playNote: Attempting note '${note}'. Context state: ${audioContext.state}`);
+      // updateAudioState(); // This might be too verbose now
 
       if (audioContext.state === 'suspended') {
-        console.log('playNote: AudioContext suspended, attempting resume...');
+        // console.log('playNote: AudioContext suspended, attempting resume...');
         try {
           await audioContext.resume();
           updateAudioStatus('Resumed');
           updateAudioState();
-          console.log(`playNote: AudioContext resumed. New state: ${audioContext.state}`);
+          // console.log(`playNote: AudioContext resumed. New state: ${audioContext.state}`);
         } catch (error) {
           console.error('playNote: Failed to resume AudioContext:', error);
           updateAudioStatus('Resume failed');
@@ -173,47 +220,94 @@
 
       try {
         const oscillator = audioContext.createOscillator();
-        const gainNode = audioContext.createGain();
+        const mainNoteGain = audioContext.createGain(); // This gain will handle the note's envelope
 
         oscillator.type = 'sine';
         oscillator.frequency.setValueAtTime(noteToFrequency(note), audioContext.currentTime);
 
-        gainNode.gain.setValueAtTime(0.8, audioContext.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 1.5);
+        // Envelope for the main note sound
+        mainNoteGain.gain.setValueAtTime(0.8, audioContext.currentTime);
+        mainNoteGain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 1.5);
 
-        oscillator.connect(gainNode);
-        gainNode.connect(audioContext.destination);
+        // Connect oscillator to its envelope gain
+        oscillator.connect(mainNoteGain);
 
+        // console.log(`playNote: About to connect delay. currentDelayTime: ${currentDelayTime}, currentFeedbackAmount: ${currentFeedbackAmount}`);
+        // console.log(`playNote: delayNode.delayTime.value: ${delayNode.delayTime.value}, feedbackNode.gain.value: ${feedbackNode.gain.value}`);
+
+        // --- Dry Path --- 
+        // Connect main note sound directly to destination if you want a dry signal
+        // For a fully effected sound, you might skip this direct connection or add a dry/wet mix control later.
+        // Let's make it mostly wet for a pronounced delay effect initially.
+        // A small amount of dry can help with attack perception.
+        const dryGain = audioContext.createGain();
+        dryGain.gain.setValueAtTime(0.3, audioContext.currentTime); // Adjust dry level
+        mainNoteGain.connect(dryGain);
+        dryGain.connect(audioContext.destination);
+
+        // --- Wet Path (Delay) ---
+        mainNoteGain.connect(delayNode);      // Send note to the delay input
+        delayNode.connect(wetGainNode);       // Delayed signal to its dedicated gain
+        wetGainNode.connect(audioContext.destination); // Wet signal to output
+
+        // Feedback loop for the delay
+        delayNode.connect(feedbackNode);
+        feedbackNode.connect(delayNode);
+        
         oscillator.start(audioContext.currentTime);
-        oscillator.stop(audioContext.currentTime + 1.5);
+        oscillator.stop(audioContext.currentTime + 1.5); // Oscillator stops after its envelope
         
-        updateAudioStatus(`Playing ${note}`);
-        console.log(`playNote: Successfully scheduled '${note}'. Context state: ${audioContext.state}`);
-        
+        // Disconnect mainNoteGain from delay path after note envelope finishes to stop feeding delay indefinitely
+        // This is important if the mainNoteGain envelope goes to zero.
         setTimeout(() => {
-          updateAudioStatus(`Finished ${note}`);
-          // console.log(`playNote: Finished ${note}. audioContext.state: ${audioContext.state}`)
-        }, 1600);
+            if (mainNoteGain && delayNode && mainNoteGain.numberOfOutputs > 0) {
+                try { 
+                    mainNoteGain.disconnect(delayNode);
+                    // console.log("Disconnected mainNoteGain from delayNode");
+                } catch(e) { console.warn("Error disconnecting mainNoteGain from delayNode:", e); }
+            }
+             if (dryGain && audioContext.destination && dryGain.numberOfOutputs > 0) {
+                try { 
+                    dryGain.disconnect(audioContext.destination);
+                    // console.log("Disconnected dryGain from destination");
+                } catch(e) { console.warn("Error disconnecting dryGain from destination:", e); }
+            }
+            // It's also good practice to disconnect the oscillator if it hasn't been already
+            // by its own .stop() method implicitly disconnecting it.
+            if (oscillator && oscillator.numberOfOutputs > 0) {
+                 try { oscillator.disconnect(); /* console.log("Disconnected oscillator"); */ } catch(e) { /* might already be disconnected */ }
+            }
+        }, 1600); 
+
+
+        updateAudioStatus(`Playing ${note} with Delay`);
+        console.log(`playNote: Successfully scheduled '${note}' with delay. Context state: ${audioContext.state}`);
         
       } catch (error) {
-        updateAudioStatus('Error playing note');
-        console.error('playNote: Error during Web Audio API calls:', error);
+        updateAudioStatus('Error playing note with delay');
+        console.error('playNote: Error during Web Audio API calls with delay:', error);
       }
     }
 
     function noteToFrequency(note) {
       const noteFrequencies = {
-        'C4': 261.63,
+        // Adding more notes for a C minor arpeggio / A minor context
+        'A3': 220.00,  // A below middle C
+        'C4': 261.63,  // Middle C
         'D4': 293.66,
         'E4': 329.63,
         'F4': 349.23,
-        'G4': 392.00,
+        'G4': 392.00,  // G above middle C
         'A4': 440.00,
         'B4': 493.88,
         'C5': 523.25
         // Add more notes as needed
       };
-      return noteFrequencies[note] || 440.00; // Default to A4
+      if (!noteFrequencies[note]) {
+        console.warn(`noteToFrequency: Frequency for note '${note}' not found. Defaulting to A4 (440Hz).`);
+        return 440.00; // Default to A4 if note not found
+      }
+      return noteFrequencies[note];
     }
   </script>
 </body>

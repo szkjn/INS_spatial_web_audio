@@ -29,6 +29,19 @@ wss.on('connection', (ws) => {
         } else {
           console.log(`Target client ${data.to} is not connected (readyState: ${targetWs.readyState})`);
         }
+      } else if (data.type === 'set_global_effect') {
+        if (clientId === 'orc') { // Ensure only ORC can set global effects
+          console.log('Server: Received global effect settings from ORC:', data.effect);
+          // Broadcast to all SRC clients
+          clients.forEach((clientWs, id) => {
+            if (id !== 'orc' && clientWs.readyState === WebSocket.OPEN) {
+              clientWs.send(JSON.stringify({ type: 'apply_effect', effect: data.effect }));
+              console.log(`Server: Sent global effect to ${id}`);
+            }
+          });
+        } else {
+          console.warn(`Server: Non-ORC client ${clientId} attempted to set global effect.`);
+        }
       } else {
         console.log(`Unhandled message type or target not found:`, data);
       }
