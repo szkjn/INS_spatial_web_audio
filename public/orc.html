@@ -65,6 +65,28 @@
     <div id="clientCountDisplay">Connected SRCs: 0</div>
   </div>
   
+  <div id="globalLfoControls" style="margin-bottom: 20px; padding: 10px; border: 1px solid #444; border-radius: 4px;">
+    <h2>Global LFO Settings (for Drones)</h2>
+    <div>
+      <label for="lfoType">LFO Type:</label>
+      <select id="lfoType" name="lfoType">
+        <option value="sine" selected>Sine</option>
+        <option value="square">Square</option>
+        <option value="sawtooth">Sawtooth</option>
+        <option value="triangle">Triangle</option>
+      </select>
+    </div>
+    <div>
+      <label for="lfoRate">LFO Rate (0.1-10Hz):</label>
+      <input type="number" id="lfoRate" name="lfoRate" min="0.1" max="10" step="0.1" value="2">
+    </div>
+    <div>
+      <label for="lfoDepth">LFO Depth (0-1):</label>
+      <input type="number" id="lfoDepth" name="lfoDepth" min="0" max="1" step="0.05" value="0.5">
+    </div>
+    <button id="applyLfoToAllButton">Apply LFO to Active Drones</button> 
+  </div>
+  
   <div id="globalEffectsControls">
     <h2>Global Delay Settings</h2>
     <div>
@@ -93,6 +115,12 @@
     const delayTimeInput = document.getElementById('delayTime');
     const delayFeedbackInput = document.getElementById('delayFeedback');
     const applyGlobalDelayButton = document.getElementById('applyGlobalDelay');
+
+    // LFO Controls
+    const lfoTypeSelect = document.getElementById('lfoType');
+    const lfoRateInput = document.getElementById('lfoRate');
+    const lfoDepthInput = document.getElementById('lfoDepth');
+    const applyLfoToAllButton = document.getElementById('applyLfoToAllButton');
 
     applyGlobalDelayButton.onclick = () => {
       const delayTime = parseFloat(delayTimeInput.value);
@@ -138,12 +166,96 @@
               };
               listItem.appendChild(noteButton);
             });
+
+            // Input for Drone Hz
+            const droneHzInput = document.createElement('input');
+            droneHzInput.type = 'number';
+            droneHzInput.placeholder = 'Hz (e.g. 220)';
+            droneHzInput.value = '220'; // Default A3
+            droneHzInput.style.marginLeft = '10px';
+            droneHzInput.style.width = '100px';
+            listItem.appendChild(droneHzInput);
+
+            // Add Start Drone button
+            const startDroneButton = document.createElement('button');
+            startDroneButton.textContent = 'Start Drone'; // Changed text
+            startDroneButton.style.marginLeft = '5px';
+            startDroneButton.onclick = () => {
+              const droneHz = parseFloat(droneHzInput.value);
+              if (isNaN(droneHz) || droneHz <= 0) {
+                alert('Please enter a valid positive Hz value for the drone.');
+                return;
+              }
+              const lfoParams = {
+                type: lfoTypeSelect.value,
+                rate: parseFloat(lfoRateInput.value),
+                depth: parseFloat(lfoDepthInput.value)
+              };
+              console.log(`ORC: Sending start_drone '${droneHz}' to ${clientId} with LFO:`, lfoParams);
+              ws.send(JSON.stringify({
+                type: 'message',
+                to: clientId,
+                payload: { type: 'start_drone', hz: droneHz, lfo: lfoParams }
+              }));
+            };
+            listItem.appendChild(startDroneButton);
+
+            // Add Stop Drone button
+            const stopDroneButton = document.createElement('button');
+            stopDroneButton.textContent = 'Stop Drone';
+            stopDroneButton.style.marginLeft = '5px';
+            stopDroneButton.onclick = () => {
+              console.log(`ORC: Sending stop_drone to ${clientId}`);
+              ws.send(JSON.stringify({
+                type: 'message',
+                to: clientId,
+                payload: { type: 'stop_drone' }
+              }));
+            };
+            listItem.appendChild(stopDroneButton);
+
             clientsList.appendChild(listItem);
           }
         });
         document.getElementById('clientCountDisplay').textContent = `Connected SRCs: ${srcClientCount}`;
+      } else if (data.type === 'lfo_params_updated_ack') { // Example ACK, not strictly needed now
+          console.log('ORC: SRC acknowledged LFO update for client: ', data.clientId);
       }
     };
+
+    applyLfoToAllButton.onclick = () => {
+        const lfoParams = {
+            type: lfoTypeSelect.value,
+            rate: parseFloat(lfoRateInput.value),
+            depth: parseFloat(lfoDepthInput.value)
+        };
+        console.log("ORC: Sending update_lfo_params to all SRCs with LFO:", lfoParams);
+        // We need to iterate over known SRC clients to send this message
+        // The current `data.clients` in onmessage is the most up-to-date list from server broadcasts
+        // For simplicity, we can get the list items and extract IDs, or maintain a separate set of active SRCs.
+        // Let's assume we have a way to get current SRC client IDs. 
+        // For now, let's just log and manually trigger on one client for testing the SRC side.
+        // A more robust way would be for the server to handle a broadcast of LFO params.
+
+        // Simplistic approach: find list items and send.
+        const srcListItems = clientsList.querySelectorAll('li');
+        srcListItems.forEach(item => {
+            // Extract client ID (this is a bit fragile, depends on how listItem.textContent is structured)
+            const clientIdText = item.textContent.split(':')[0]; 
+            if (clientIdText && clientIdText !== 'orc') {
+                 console.log(`ORC: Sending update_lfo_params to ${clientIdText}`);
+                 ws.send(JSON.stringify({
+                    type: 'message',
+                    to: clientIdText,
+                    payload: { type: 'update_lfo_params', params: lfoParams }
+                }));
+            }
+        });
+        if (srcListItems.length === 0) {
+            console.log("ORC: No SRC clients found to send LFO update to.");
+        }
+    };
+
   </script>
 </body>
 </html>

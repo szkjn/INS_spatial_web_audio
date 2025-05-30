@@ -81,6 +81,19 @@
     let audioInitialized = false;
     let noteCount = 0;
 
+    // Drone specific nodes
+    let droneOscillator = null;
+    let droneGainNode = null;
+    let dryGainDrone = null; // Separate dry gain for the drone
+    let droneActive = false;
+
+    // LFO specific nodes and parameters
+    let lfo = null;
+    let lfoGain = null;
+    let currentLfoRate = 2; // Default LFO rate in Hz
+    let currentLfoDepth = 0.5; // Default LFO depth (0 to 1)
+    let currentLfoType = 'sine'; // Default LFO waveform
+
     // Delay effect nodes and parameters
     let delayNode = null;
     let feedbackNode = null;
@@ -177,6 +190,11 @@
 
         console.log('initAudio: Delay nodes initialized.');
 
+        // Create the separate dry gain for the drone here, so it's ready
+        dryGainDrone = audioContext.createGain();
+        dryGainDrone.gain.setValueAtTime(0.3, audioContext.currentTime); // Default drone dry level
+        console.log('initAudio: dryGainDrone initialized.');
+
         audioInitialized = true;
         updateAudioStatus('Initialized');
         updateAudioState();
@@ -204,11 +222,8 @@
           console.log('SRC: Received client list update.');
         } else if (data.type === 'apply_effect' && data.effect && data.effect.type === 'delay') {
           console.log('SRC: Received delay effect settings:', data.effect);
-          const newDelayTime = Math.max(0, Math.min(MAX_DELAY, data.effect.delayTime || 0));
-          const newFeedbackAmount = Math.max(0, Math.min(0.95, data.effect.feedback || 0)); // Cap feedback
-
-          currentDelayTime = newDelayTime;
-          currentFeedbackAmount = newFeedbackAmount;
+          currentDelayTime = Math.max(0, Math.min(MAX_DELAY, data.effect.delayTime || 0));
+          currentFeedbackAmount = Math.max(0, Math.min(0.95, data.effect.feedback || 0)); // Cap feedback
 
           if (audioContext && delayNode && feedbackNode) {
             const applyTime = audioContext.currentTime;
@@ -218,6 +233,45 @@
             document.getElementById('audioStatus').textContent = `Delay: T=${currentDelayTime.toFixed(2)}s F=${currentFeedbackAmount.toFixed(2)}`;
           } else {
             console.warn('SRC: AudioContext or delay nodes not ready for effect update. Parameters stored.');
+          }
+        } else if (data.type === 'start_drone') {
+          if (audioInitialized) {
+            if (data.hz !== undefined) {
+              console.log(`SRC: Received start_drone for ${data.hz} Hz with LFO:`, data.lfo);
+              startDrone(null, data.hz, data.lfo ? data.lfo.rate : undefined, data.lfo ? data.lfo.depth : undefined, data.lfo ? data.lfo.type : undefined);
+            } else if (data.note !== undefined) { // Fallback for old message type, can be removed later
+              console.log(`SRC: Received start_drone for note '${data.note}' (fallback) with LFO:`, data.lfo);
+              startDrone(data.note, undefined, data.lfo ? data.lfo.rate : undefined, data.lfo ? data.lfo.depth : undefined, data.lfo ? data.lfo.type : undefined);
+            } else {
+              console.warn('SRC: start_drone message missing hz or note.');
+            }
+          } else {
+            console.warn('SRC: Audio not initialized, cannot start drone.');
+            updateAudioStatus('Error: Init audio before drone.');
+          }
+        } else if (data.type === 'stop_drone') {
+          console.log('SRC: Received stop_drone');
+          if (audioInitialized) {
+            stopDrone();
+          } else {
+            console.warn('SRC: Audio not initialized, cannot stop drone.');
+          }
+        } else if (data.type === 'update_lfo_params') {
+          console.log('SRC: Received LFO parameter update:', data.params);
+          if (data.params) {
+            currentLfoRate = data.params.rate !== undefined ? data.params.rate : currentLfoRate;
+            currentLfoDepth = data.params.depth !== undefined ? data.params.depth : currentLfoDepth;
+            currentLfoType = data.params.type !== undefined ? data.params.type : currentLfoType;
+            
+            if (droneActive && lfo && lfoGain && audioContext) {
+              lfo.frequency.setValueAtTime(currentLfoRate, audioContext.currentTime);
+              lfoGain.gain.setValueAtTime(currentLfoDepth, audioContext.currentTime);
+              lfo.type = currentLfoType;
+              console.log(`SRC: Updated active LFO - Rate: ${currentLfoRate}, Depth: ${currentLfoDepth}, Type: ${currentLfoType}`);
+              updateAudioStatus(`Drone LFO: ${currentLfoType} ${currentLfoRate.toFixed(1)}Hz D:${currentLfoDepth.toFixed(2)}`);
+            } else {
+              console.log('SRC: LFO parameters stored for next drone.');
+            }
           }
         } else {
           console.warn('SRC: Received unknown message type:', data);
@@ -341,6 +395,131 @@
         updateAudioStatus('Error playing note with delay');
         console.error('playNote: Error during Web Audio API calls with delay:', error);
       }
+    }
+
+    async function startDrone(note, hz, lfoRate = currentLfoRate, lfoDepth = currentLfoDepth, lfoType = currentLfoType) {
+      if (!audioInitialized || !audioContext || !delayNode || !feedbackNode || !wetGainNode || !dryGainDrone) {
+        console.error('startDrone: Audio system or required nodes not initialized properly.');
+        updateAudioStatus('Error: Audio/Effects not ready for drone.');
+        return;
+      }
+
+      if (droneActive) {
+        console.log('startDrone: Drone already active, stopping previous one first.');
+        await stopDrone(); // Ensure previous drone is fully stopped and LFO is cleared
+      }
+
+      const frequency = hz !== undefined ? hz : (note ? noteToFrequency(note) : noteToFrequency('A3')); // Prioritize Hz, then note, then default
+      const displayValue = hz !== undefined ? `${hz.toFixed(2)} Hz` : note;
+
+      console.log(`startDrone: Starting drone for ${displayValue}. LFO - Rate: ${lfoRate}, Depth: ${lfoDepth}, Type: ${lfoType}. Context state: ${audioContext.state}`);
+      updateAudioState();
+
+      if (audioContext.state === 'suspended') {
+        try {
+          await audioContext.resume();
+          updateAudioStatus('Resumed for Drone');
+          updateAudioState();
+        } catch (error) {
+          console.error('startDrone: Failed to resume AudioContext:', error);
+          updateAudioStatus('Drone Resume failed');
+          return;
+        }
+      }
+
+      try {
+        droneOscillator = audioContext.createOscillator();
+        droneGainNode = audioContext.createGain();
+
+        droneOscillator.type = 'sine'; 
+        droneOscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+        droneGainNode.gain.setValueAtTime(0.5, audioContext.currentTime); // Base gain for drone
+
+        // --- LFO Setup for Amplitude Modulation (Tremolo) ---
+        lfo = audioContext.createOscillator();
+        lfo.type = lfoType;
+        lfo.frequency.setValueAtTime(lfoRate, audioContext.currentTime);
+
+        lfoGain = audioContext.createGain();
+        lfoGain.gain.setValueAtTime(lfoDepth, audioContext.currentTime);
+
+        // Connect LFO path: LFO -> LFO Gain -> Modulates the main drone's gain
+        lfo.connect(lfoGain);
+        lfoGain.connect(droneGainNode.gain); // Modulate the gain parameter of droneGainNode
+        console.log('startDrone: LFO connected to droneGainNode.gain');
+
+        lfo.start(audioContext.currentTime);
+        // --- End LFO Setup ---
+
+        droneOscillator.connect(droneGainNode);
+
+        // --- Drone Dry Path ---
+        droneGainNode.connect(dryGainDrone);
+        dryGainDrone.connect(audioContext.destination);
+
+        // --- Drone Wet Path (Delay) ---
+        droneGainNode.connect(delayNode); // Connect to the existing shared delay line
+        // delayNode is already connected to wetGainNode -> destination and feedbackNode -> delayNode
+
+        droneOscillator.start(audioContext.currentTime);
+        droneActive = true;
+        document.getElementById('testTone').style.display = 'none'; // Hide test tone when drone is active
+        updateAudioStatus(`Drone: ${displayValue} | LFO: ${lfoType} ${lfoRate.toFixed(1)}Hz D:${lfoDepth.toFixed(2)}`);
+        console.log(`startDrone: Drone '${displayValue}' started successfully with LFO.`);
+
+      } catch (error) {
+        updateAudioStatus('Error starting drone');
+        console.error('startDrone: Error during Web Audio API calls:', error);
+        droneActive = false; // Ensure flag is reset on error
+      }
+    }
+
+    async function stopDrone() {
+      if (!droneActive || !droneOscillator || !droneGainNode) {
+        // console.log('stopDrone: No active drone to stop.');
+        return;
+      }
+      console.log('stopDrone: Stopping drone...');
+      try {
+        const stopTime = audioContext.currentTime + 0.1; // Short fade out
+        droneGainNode.gain.exponentialRampToValueAtTime(0.0001, stopTime);
+        
+        droneOscillator.stop(stopTime);
+
+        // Disconnect after stopping
+        // Use a short timeout to ensure nodes are disconnected after they've finished processing
+        setTimeout(() => {
+            if (droneGainNode) {
+                try { droneGainNode.disconnect(); } catch(e) { /* ignore */ }
+            }
+            if (droneOscillator) {
+                try { droneOscillator.disconnect(); } catch(e) { /* ignore */ }
+            }
+            if (lfo) {
+                try { lfo.disconnect(); } catch(e) { /* ignore */ }
+            }
+            if (lfoGain) {
+                try { lfoGain.disconnect(); } catch(e) { /* ignore */ }
+            }
+            // dryGainDrone remains connected to destination, ready for next drone
+        }, (stopTime - audioContext.currentTime + 0.1) * 1000); // Timeout slightly after stop time
+
+      } catch (error) {
+        console.error('stopDrone: Error during Web Audio API calls:', error);
+      }
+      droneOscillator = null;
+      droneGainNode = null;
+      // Clear LFO nodes as well
+      if (lfo) { 
+        try { if(lfo.playbackState === lfo.PLAYING_STATE || lfo.playbackState === lfo.SCHEDULED_STATE) lfo.stop(audioContext.currentTime); } catch(e) {/* already stopped or not started */}
+        lfo = null; 
+      }
+      if (lfoGain) { lfoGain = null; }
+
+      droneActive = false;
+      document.getElementById('testTone').style.display = 'block'; // Re-show test tone
+      updateAudioStatus('Drone stopped');
+      console.log('stopDrone: Drone stopped and cleaned up.');
     }
 
     function noteToFrequency(note) {
