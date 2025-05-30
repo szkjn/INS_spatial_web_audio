@@ -1,4 +1,3 @@
-<!-- public/orc.html -->
 <!DOCTYPE html>
 <html>
 <head>
@@ -26,12 +25,15 @@
           if (clientId !== 'orc') {
             const li = document.createElement('li');
             li.textContent = clientId;
+            li.style.cursor = 'pointer';
             li.onclick = () => {
+              console.log(`Sending note to ${clientId}`);
               ws.send(JSON.stringify({
                 type: 'message',
                 to: clientId,
                 payload: { type: 'note', note: 'C4' }
               }));
+              console.log(`Message sent to ${clientId}`);
             };
             clientsList.appendChild(li);
           }

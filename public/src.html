@@ -8,10 +8,98 @@
 <body>
   <h1>SRC Client</h1>
   <p id="status">Connecting...</p>
+  <button id="initAudio" style="display: none;">Enable Audio</button>
+  <button id="testTone" style="display: none;">Test Tone</button>
+  <div id="noteIndicator" style="margin-top: 20px; padding: 10px; border: 2px solid #ccc; border-radius: 5px;">
+    <h3>Last Note Received:</h3>
+    <p id="lastNote">None</p>
+    <p id="noteCount">Notes received: 0</p>
+    <p id="audioStatus">Audio: Not initialized</p>
+    <p id="audioState">State: Unknown</p>
+    <p id="browserInfo">Browser: Checking...</p>
+    <p id="volumeInfo">Volume: Unknown</p>
+  </div>
 
   <script>
     const id = 'src-' + Math.random().toString(36).substr(2, 5);
     const ws = new WebSocket(`ws://${location.host}`);
+    let audioContext;
+    let audioInitialized = false;
+    let noteCount = 0;
+
+    // Check browser support and capabilities
+    function checkBrowserSupport() {
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      const isAndroid = /Android/.test(navigator.userAgent);
+      const isChrome = /Chrome/.test(navigator.userAgent);
+      const isSafari = /Safari/.test(navigator.userAgent) && !isChrome;
+      
+      let browserInfo = `${isIOS ? 'iOS' : isAndroid ? 'Android' : 'Desktop'}`;
+      if (isChrome) browserInfo += ' Chrome';
+      else if (isSafari) browserInfo += ' Safari';
+      
+      document.getElementById('browserInfo').textContent = `Browser: ${browserInfo}`;
+      
+      // Check if Web Audio API is supported
+      if (!window.AudioContext && !window.webkitAudioContext) {
+        document.getElementById('audioStatus').textContent = 'Audio: Not supported';
+        return false;
+      }
+      return true;
+    }
+
+    // Show init audio button initially
+    document.getElementById('initAudio').style.display = 'block';
+    document.getElementById('initAudio').onclick = initAudio;
+    document.getElementById('testTone').onclick = () => playNote('A4');
+    
+    // Check browser support on load
+    checkBrowserSupport();
+
+    function updateAudioStatus(status) {
+      document.getElementById('audioStatus').textContent = `Audio: ${status}`;
+    }
+
+    function updateAudioState() {
+      if (audioContext) {
+        document.getElementById('audioState').textContent = `State: ${audioContext.state}`;
+      }
+    }
+
+    function updateNoteReceived(note) {
+      noteCount++;
+      document.getElementById('lastNote').textContent = note;
+      document.getElementById('noteCount').textContent = `Notes received: ${noteCount}`;
+      
+      // Flash the indicator
+      const indicator = document.getElementById('noteIndicator');
+      indicator.style.backgroundColor = '#90EE90';
+      setTimeout(() => {
+        indicator.style.backgroundColor = '';
+      }, 500);
+    }
+
+    async function initAudio() {
+      console.log('initAudio: Attempting to initialize AudioContext...');
+      try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        if (audioContext.state === 'suspended') {
+          console.log('initAudio: AudioContext is suspended, attempting to resume...');
+          await audioContext.resume();
+        }
+        
+        audioInitialized = true;
+        document.getElementById('initAudio').style.display = 'none';
+        document.getElementById('testTone').style.display = 'block';
+        updateAudioStatus('Initialized');
+        updateAudioState();
+        console.log(`initAudio: AudioContext initialized successfully. State: ${audioContext.state}`);
+      } catch (error) {
+        updateAudioStatus('Failed to initialize');
+        console.error('initAudio: Failed to initialize AudioContext:', error);
+      }
+    }
 
     ws.onopen = () => {
       document.getElementById('status').textContent = 'Connected';
@@ -19,14 +107,114 @@
     };
 
     ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      console.log('Received:', data);
-      // Future: handle MIDI/audio commands here
+      // console.log('SRC received message:', event.data); // Can be noisy
+      try {
+        const data = JSON.parse(event.data);
+        // console.log('SRC parsed data:', data); // Can be noisy
+        if (data.type === 'note') {
+          console.log(`SRC: Received note '${data.note}'`);
+          updateNoteReceived(data.note);
+          playNote(data.note);
+        } else if (data.type === 'clients') {
+          console.log('SRC: Received client list update.');
+          // Potentially update UI if needed, but not logging every client ID here
+        } else {
+          console.warn('SRC: Received unknown message type:', data);
+        }
+      } catch (error) {
+        console.error('SRC: Error processing message:', event.data, error);
+      }
     };
 
     ws.onclose = () => {
       document.getElementById('status').textContent = 'Disconnected';
     };
+
+    async function playNote(note) {
+      if (!audioInitialized) {
+        console.log('playNote: Audio not initialized, attempting to initialize...');
+        updateAudioStatus('Auto-initializing...');
+        await initAudio();
+        if (!audioInitialized) {
+            console.error('playNote: Audio initialization failed.');
+            updateAudioStatus('Initialization failed');
+            return;
+        }
+      }
+
+      if (!audioContext) {
+        console.error('playNote: AudioContext is not available.');
+        updateAudioStatus('Not available');
+        return;
+      }
+
+      console.log(`playNote: Attempting note '${note}'. Context state: ${audioContext.state}`);
+      updateAudioState();
+
+      if (audioContext.state === 'suspended') {
+        console.log('playNote: AudioContext suspended, attempting resume...');
+        try {
+          await audioContext.resume();
+          updateAudioStatus('Resumed');
+          updateAudioState();
+          console.log(`playNote: AudioContext resumed. New state: ${audioContext.state}`);
+        } catch (error) {
+          console.error('playNote: Failed to resume AudioContext:', error);
+          updateAudioStatus('Resume failed');
+          return;
+        }
+      }
+      
+      if (audioContext.state !== 'running') {
+        console.error(`playNote: AudioContext not running. State: ${audioContext.state}`);
+        updateAudioStatus(`Not running: ${audioContext.state}`);
+        return;
+      }
+
+      try {
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(noteToFrequency(note), audioContext.currentTime);
+
+        gainNode.gain.setValueAtTime(0.8, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 1.5);
+
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+
+        oscillator.start(audioContext.currentTime);
+        oscillator.stop(audioContext.currentTime + 1.5);
+        
+        updateAudioStatus(`Playing ${note}`);
+        console.log(`playNote: Successfully scheduled '${note}'. Context state: ${audioContext.state}`);
+        
+        setTimeout(() => {
+          updateAudioStatus(`Finished ${note}`);
+          // console.log(`playNote: Finished ${note}. audioContext.state: ${audioContext.state}`)
+        }, 1600);
+        
+      } catch (error) {
+        updateAudioStatus('Error playing note');
+        console.error('playNote: Error during Web Audio API calls:', error);
+      }
+    }
+
+    function noteToFrequency(note) {
+      const noteFrequencies = {
+        'C4': 261.63,
+        'D4': 293.66,
+        'E4': 329.63,
+        'F4': 349.23,
+        'G4': 392.00,
+        'A4': 440.00,
+        'B4': 493.88,
+        'C5': 523.25
+        // Add more notes as needed
+      };
+      return noteFrequencies[note] || 440.00; // Default to A4
+    }
   </script>
 </body>
 </html>

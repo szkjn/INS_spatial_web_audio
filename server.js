@@ -21,16 +21,28 @@ wss.on('connection', (ws) => {
         broadcastClients();
         console.log(`Client registered: ${clientId}`);
       } else if (data.type === 'message' && data.to && clients.has(data.to)) {
-        clients.get(data.to).send(JSON.stringify(data.payload));
+        console.log(`Forwarding message from ${clientId} to ${data.to}:`, data.payload);
+        const targetWs = clients.get(data.to);
+        if (targetWs.readyState === WebSocket.OPEN) {
+          targetWs.send(JSON.stringify(data.payload));
+          console.log(`Message sent successfully to ${data.to}`);
+        } else {
+          console.log(`Target client ${data.to} is not connected (readyState: ${targetWs.readyState})`);
+        }
+      } else {
+        console.log(`Unhandled message type or target not found:`, data);
       }
     } catch (err) {
-      console.error('Invalid message:', message);
+      console.error('Invalid message:', message, err);
     }
   });
 
   ws.on('close', () => {
-    if (clientId) clients.delete(clientId);
-    console.log(`Client disconnected: ${clientId}`);
+    if (clientId) {
+      clients.delete(clientId);
+      broadcastClients();
+      console.log(`Client disconnected: ${clientId}`);
+    }
   });
 });
 
@@ -48,3 +60,4 @@ function broadcastClients() {
 server.listen(3000, '0.0.0.0', () => {
     console.log('Server running on http://0.0.0.0:3000');
 });
+
